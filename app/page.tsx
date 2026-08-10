@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { RadarAccount, storageKeys, useStored, writeStored } from "@/lib/account";
 
 type PlatformName = "Instagram" | "TikTok" | "YouTube" | "X";
 
@@ -419,7 +420,7 @@ export default function Home() {
   const [budget, setBudget] = useState(600000);
   const [minEngagement, setMinEngagement] = useState(0);
   const [sortBy, setSortBy] = useState("Best match");
-  const [saved, setSaved] = useState<number[]>([3]);
+  const saved = useStored<number[]>(storageKeys.shortlist, []);
   const [selectedCreator, setSelectedCreator] = useState<Creator | null>(null);
   const [profileTab, setProfileTab] = useState<"overview" | "rates" | "audience">("overview");
   const [contacting, setContacting] = useState(false);
@@ -427,6 +428,20 @@ export default function Home() {
   const [mobileFilters, setMobileFilters] = useState(false);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [toast, setToast] = useState("");
+  const account = useStored<RadarAccount | null>(storageKeys.account, null);
+  const profileViews = useStored<number[]>(storageKeys.profileViews, []);
+  const [signupGate, setSignupGate] = useState(false);
+
+  useEffect(() => {
+    const creatorId = Number(new URLSearchParams(window.location.search).get("creator"));
+    if (account && creatorId) {
+      const creator = creators.find((item) => item.id === creatorId);
+      if (creator) {
+        const timer = window.setTimeout(() => setSelectedCreator(creator), 0);
+        return () => window.clearTimeout(timer);
+      }
+    }
+  }, [account]);
 
   useEffect(() => {
     if (!toast) return;
@@ -527,14 +542,20 @@ export default function Home() {
   }
 
   function toggleSaved(id: number) {
-    setSaved((current) => {
-      const isSaved = current.includes(id);
-      setToast(isSaved ? "Removed from shortlist" : "Added to shortlist");
-      return isSaved ? current.filter((item) => item !== id) : [...current, id];
-    });
+    const isSaved = saved.includes(id);
+    setToast(isSaved ? "Removed from shortlist" : "Added to shortlist");
+    writeStored(storageKeys.shortlist, isSaved ? saved.filter((item) => item !== id) : [...saved, id]);
   }
 
   function openCreator(creator: Creator) {
+    if (!account && !profileViews.includes(creator.id) && profileViews.length >= 3) {
+      setSignupGate(true);
+      return;
+    }
+    if (!account && !profileViews.includes(creator.id)) {
+      const next = [...profileViews, creator.id];
+      writeStored(storageKeys.profileViews, next);
+    }
     setSelectedCreator(creator);
     setProfileTab("overview");
     setContacting(false);
@@ -552,13 +573,15 @@ export default function Home() {
           <nav className={`main-nav ${mobileMenu ? "open" : ""}`} aria-label="Primary navigation">
             <a className="active" href="#creator-results" onClick={() => setMobileMenu(false)}>Explore creators</a>
             <a href="#how-it-works" onClick={() => setMobileMenu(false)}>How it works</a>
+            <a href="/pricing" onClick={() => setMobileMenu(false)}>Pricing</a>
+            <a href="/join/creator" onClick={() => setMobileMenu(false)}>For creators</a>
             <button type="button" onClick={() => { setToast(`${saved.length} creator${saved.length === 1 ? "" : "s"} in your shortlist`); setMobileMenu(false); }}>
               Shortlist <span className="nav-count">{saved.length}</span>
             </button>
           </nav>
           <div className="topbar-actions">
             <span className="market-pill"><span className="flag-dot">NG</span> Nigeria <span className="down">⌄</span></span>
-            <button className="business-button" type="button" onClick={() => setToast("Business workspace is ready for onboarding")}>For businesses</button>
+            <a className="business-button" href={account ? (account.role === "creator" ? "/dashboard/creator" : "/dashboard/business") : "/join/business"}>{account ? "Dashboard" : "For businesses"}</a>
             <button className="mobile-menu-button" type="button" aria-label="Toggle menu" onClick={() => setMobileMenu((value) => !value)}><Icon name="menu" /></button>
           </div>
         </div>
@@ -601,6 +624,7 @@ export default function Home() {
       <div className="demo-notice">
         <span><Icon name="shield" size={16} /></span>
         <p><strong>Product demo:</strong> Profiles and rates below are illustrative. Live creator data should come from permitted platform APIs and creator-submitted rate cards.</p>
+        {!account && <a className="guest-profile-meter" href="/join/business"><strong>{Math.max(0, 3 - profileViews.length)}</strong><span>free profile view{3 - profileViews.length === 1 ? "" : "s"} left</span></a>}
       </div>
 
       <section className="marketplace" id="creator-results">
@@ -721,7 +745,7 @@ export default function Home() {
       </section>
 
       <section className="how-section" id="how-it-works">
-        <div className="how-copy"><span className="section-kicker light">One brief. Better matches.</span><h2>From “who should we use?”<br/>to a confident shortlist.</h2><p>CreatorRadar brings fragmented public signals and creator-submitted commercial information into one clear workflow.</p><button type="button" onClick={() => document.getElementById("top")?.scrollIntoView({ behavior: "smooth" })}>Start a creator search <Icon name="arrow" /></button></div>
+        <div className="how-copy"><span className="section-kicker light">One brief. Better matches.</span><h2>From “who should we use?”<br/>to a confident shortlist.</h2><p>CreatorRadar brings fragmented public signals and creator-submitted commercial information into one clear workflow.</p><button type="button" onClick={() => document.getElementById("top")?.scrollIntoView({ behavior: "smooth" })}>Start a creator search <Icon name="arrow" /></button><div className="role-links"><a href="/join/business">Create business workspace</a><a href="/join/creator">Join as a creator</a></div></div>
         <div className="how-steps">
           <div><span>01</span><section><strong>Describe your campaign</strong><p>Tell Radar AI your product, customer, market and spend.</p></section></div>
           <div><span>02</span><section><strong>Compare verified signals</strong><p>Review audience fit, engagement, platforms and price.</p></section></div>
@@ -732,7 +756,7 @@ export default function Home() {
       <footer>
         <a className="brand footer-brand" href="#top"><span className="radar-logo"><span /></span><span>Creator<span>Radar</span></span></a>
         <p>Creator intelligence built for Nigerian businesses.</p>
-        <span>© 2026 CreatorRadar · Demo experience</span>
+        <span><a href="/pricing">Pricing</a> · <a href="/join/creator">Creator signup</a> · © 2026 CreatorRadar</span>
       </footer>
 
       {mobileFilters && <button className="mobile-overlay" type="button" aria-label="Close filters" onClick={() => setMobileFilters(false)} />}
@@ -785,7 +809,7 @@ export default function Home() {
             </div>
             <div className="profile-contact-bar">
               <div><span>Starting from</span><strong>{formatNaira(selectedCreator.fromRate)}</strong><small><Icon name="clock" size={12} /> {selectedCreator.responseTime}</small></div>
-              <button type="button" onClick={() => { setContacting(true); setMessageSent(false); }}>Request rate & availability <Icon name="arrow" /></button>
+              <button type="button" onClick={() => { if (account?.role === "business") { setContacting(true); setMessageSent(false); } else { setSignupGate(true); } }}>Request rate & availability <Icon name="arrow" /></button>
             </div>
 
             {contacting && (
@@ -811,6 +835,22 @@ export default function Home() {
               </div>
             )}
           </aside>
+        </div>
+      )}
+
+      {signupGate && (
+        <div className="access-gate-overlay" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setSignupGate(false); }}>
+          <section className="access-gate" role="dialog" aria-modal="true" aria-label="Create an account to continue">
+            <button className="gate-close" type="button" onClick={() => setSignupGate(false)} aria-label="Close"><Icon name="close" /></button>
+            <span className="gate-icon"><span className="radar-logo"><span /></span></span>
+            <span className="section-kicker">Keep exploring</span>
+            <h2>You&apos;ve viewed your three free creator profiles.</h2>
+            <p>Create a free business workspace to unlock unlimited profile access, keep your shortlist and request current rates.</p>
+            <div className="gate-benefits"><span><Icon name="check" size={15} /> Unlimited creator profiles</span><span><Icon name="check" size={15} /> Persistent shortlists</span><span><Icon name="check" size={15} /> Rate requests</span></div>
+            <a className="gate-primary" href="/join/business">Create free business workspace <Icon name="arrow" /></a>
+            <a className="gate-secondary" href="/join/creator">I&apos;m a creator</a>
+            <small>No card required. Your shortlist will be waiting.</small>
+          </section>
         </div>
       )}
 

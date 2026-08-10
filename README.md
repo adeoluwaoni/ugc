@@ -1,4 +1,35 @@
-# vinext-starter
+# CreatorRadar Nigeria
+
+CreatorRadar is a Nigerian creator intelligence marketplace for discovering creators, comparing permitted public social signals, reviewing creator-submitted rates and building business shortlists.
+
+## Product modules
+
+- Public creator discovery with a three-profile guest preview
+- Creator onboarding for profile details, social URLs and commercial rate packages
+- Creator dashboard for profile readiness, rate-card management and social refresh status
+- Business onboarding with campaign preferences and budget context
+- Business dashboard with persistent creator shortlists
+- Pricing for free, campaign and scale plans
+- Server-side social sync adapters for YouTube and X
+
+The current demo keeps account and workspace state in browser storage so the existing zero-configuration deployment continues to work. `db/schema.ts` defines the production persistence contract for accounts, creator and business profiles, social connections, rate packages, shortlists and profile-view enforcement. Moving account data server-side requires an identity provider and a configured database binding.
+
+### Social data configuration
+
+- `YOUTUBE_API_KEY` enables live YouTube channel statistics via the YouTube Data API.
+- `X_BEARER_TOKEN` enables live X account public metrics via the X API.
+- Instagram and TikTok URLs are validated and stored, but live metrics remain pending until approved provider access is connected.
+
+Social login credentials are never collected by CreatorRadar. Provider failures are surfaced as errors and the interface does not invent live metrics.
+
+## Local development
+
+```bash
+npm ci
+npm run dev
+```
+
+## Starter and deployment notes
 
 A clean full-stack starter running on
 [vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
