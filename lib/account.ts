@@ -57,9 +57,6 @@ export type BusinessProfile = {
 };
 
 export const storageKeys = {
-  account: "creatorradar.account",
-  creatorProfile: "creatorradar.creatorProfile",
-  businessProfile: "creatorradar.businessProfile",
   shortlist: "creatorradar.shortlist",
   profileViews: "creatorradar.profileViews",
 } as const;

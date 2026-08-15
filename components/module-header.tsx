@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { RadarAccount, storageKeys, useStored } from "@/lib/account";
+import { useAuth } from "@/components/auth-provider";
 
 export function ModuleHeader() {
-  const account = useStored<RadarAccount | null>(storageKeys.account, null);
+  const { account, signOut } = useAuth();
 
   const dashboard = account?.role === "creator" ? "/dashboard/creator" : "/dashboard/business";
 
@@ -22,9 +22,9 @@ export function ModuleHeader() {
         </nav>
         <div className="topbar-actions">
           {account ? (
-            <Link className="business-button" href={dashboard}>Open dashboard</Link>
+            <><Link className="business-button" href={dashboard}>Open dashboard</Link><button className="header-signout" type="button" onClick={() => void signOut()}>Sign out</button></>
           ) : (
-            <Link className="business-button" href="/join/business">For businesses</Link>
+            <><Link className="header-signin" href="/auth?mode=signin">Sign in</Link><Link className="business-button" href="/auth?mode=signup&role=business&next=/join/business">For businesses</Link></>
           )}
         </div>
       </div>

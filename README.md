@@ -12,7 +12,16 @@ CreatorRadar is a Nigerian creator intelligence marketplace for discovering crea
 - Pricing for free, campaign and scale plans
 - Server-side social sync adapters for YouTube and X
 
-The current demo keeps account and workspace state in browser storage so the existing zero-configuration deployment continues to work. `db/schema.ts` defines the production persistence contract for accounts, creator and business profiles, social connections, rate packages, shortlists and profile-view enforcement. Moving account data server-side requires an identity provider and a configured database binding.
+Authentication and private workspace data are backed by the connected Supabase project. Creator and business account roles, profiles and business shortlists are protected with PostgreSQL row-level security; browser storage is used only for anonymous shortlist previews and the three-profile guest meter.
+
+### Authentication configuration
+
+- Email/password sign-up, email confirmation and sign-in use Supabase Auth.
+- Google sign-in uses Supabase's Google provider and the `/auth/callback` PKCE exchange route.
+- The public Supabase project URL and publishable key can be overridden with `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`; no service-role key is used by the application.
+- The canonical database change is `supabase/migrations/20260814221847_create_creator_radar_auth_profiles.sql`.
+
+To activate Google in a deployment, enable Google under Supabase Auth providers, add the Google Client ID and secret, register `https://zkeqtbebsvxwcdakrtzk.supabase.co/auth/v1/callback` as an authorized Google redirect URI, and allow the deployed site's `/auth/callback` URL in Supabase redirect settings.
 
 ### Social data configuration
 
