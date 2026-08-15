@@ -1,21 +1,55 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useAuth } from "@/components/auth-provider";
 import { ModuleHeader } from "@/components/module-header";
-import { BusinessProfile, storageKeys, useStored, writeStored } from "@/lib/account";
+import { BusinessProfile } from "@/lib/account";
 import { creatorCatalog } from "@/lib/catalog";
+import { createClient } from "@/lib/supabase/client";
+import { businessProfileFromRow } from "@/lib/supabase/profiles";
 
 export default function BusinessDashboardPage() {
-  const profile = useStored<BusinessProfile | null>(storageKeys.businessProfile, null);
-  const shortlist = useStored<number[]>(storageKeys.shortlist, []);
+  const { user, loading: authLoading } = useAuth();
+  const supabase = useMemo(() => createClient(), []);
+  const [profile, setProfile] = useState<BusinessProfile | null>(null);
+  const [shortlist, setShortlist] = useState<number[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [welcome, setWelcome] = useState(true);
 
-  function removeCreator(id: number) {
-    const next = shortlist.filter((item) => item !== id);
-    writeStored(storageKeys.shortlist, next);
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) return;
+    let active = true;
+    const userId = user.id;
+    async function loadWorkspace() {
+      const [profileResult, shortlistResult] = await Promise.all([
+        supabase.from("business_profiles").select("*").eq("user_id", userId).maybeSingle(),
+        supabase.from("shortlist_items").select("creator_catalog_id").eq("business_user_id", userId),
+      ]);
+      if (!active) return;
+      if (profileResult.error) setError(profileResult.error.message);
+      else if (shortlistResult.error) setError(shortlistResult.error.message);
+      setProfile(profileResult.data ? businessProfileFromRow(profileResult.data) : null);
+      setShortlist(shortlistResult.data?.map((item) => item.creator_catalog_id) ?? []);
+      setLoading(false);
+    }
+    void loadWorkspace();
+    return () => { active = false; };
+  }, [authLoading, supabase, user]);
+
+  async function removeCreator(id: number) {
+    if (!user) return;
+    const { error: removeError } = await supabase.from("shortlist_items").delete().eq("business_user_id", user.id).eq("creator_catalog_id", id);
+    if (removeError) {
+      setError(removeError.message);
+      return;
+    }
+    setShortlist((current) => current.filter((item) => item !== id));
   }
 
+  if (loading) return <main className="module-page"><ModuleHeader /><section className="missing-profile"><span>BR</span><h1>Loading your business workspace…</h1></section></main>;
   if (!profile) return <main className="module-page"><ModuleHeader /><section className="missing-profile"><span>BR</span><h1>Create your business workspace</h1><p>Sign up to unlock unlimited creator profiles and persistent shortlists.</p><Link href="/join/business">Create a free workspace →</Link></section></main>;
 
   const selectedCreators = creatorCatalog.filter((creator) => shortlist.includes(creator.id));
@@ -25,6 +59,7 @@ export default function BusinessDashboardPage() {
       <ModuleHeader />
       <section className="dashboard-shell">
         {welcome && <div className="welcome-banner"><span>✓</span><div><strong>Your business workspace is ready.</strong><p>You now have unlimited profile access. Creators you shortlist in the marketplace will appear here.</p></div><button type="button" onClick={() => setWelcome(false)}>×</button></div>}
+        {error && <p className="form-error" role="alert">{error}</p>}
         <header className="dashboard-heading"><div><span className="section-kicker">{profile.companyName} workspace</span><h1>Find your next creator partner.</h1><p>Review your shortlist, compare commercial fit and move qualified creators into campaign conversations.</p></div><div><Link className="secondary-action" href="/join/business">Workspace settings</Link><Link className="primary-action" href="/#creator-results">Browse creators</Link></div></header>
 
         <div className="dashboard-stat-grid">

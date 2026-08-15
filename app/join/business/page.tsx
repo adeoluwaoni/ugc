@@ -1,35 +1,74 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@/components/auth-provider";
 import { ModuleHeader } from "@/components/module-header";
-import { BusinessProfile, storageKeys, useStored, writeStored } from "@/lib/account";
+import { BusinessProfile } from "@/lib/account";
+import { createClient } from "@/lib/supabase/client";
+import { businessProfileFromRow, businessProfileToRow } from "@/lib/supabase/profiles";
 
 const goalOptions = ["Find creators", "Build shortlists", "Compare rates", "Request campaigns", "Track creator performance"];
 const initialProfile: BusinessProfile = { contactName: "", workEmail: "", companyName: "", website: "", industry: "Consumer products", teamSize: "1–10", monthlyBudget: "₦250K–₦1M", goals: ["Find creators", "Build shortlists"], updatedAt: "" };
 
 export default function BusinessJoinPage() {
   const router = useRouter();
-  const storedProfile = useStored<BusinessProfile | null>(storageKeys.businessProfile, null);
+  const { user, account, loading: authLoading } = useAuth();
+  const supabase = useMemo(() => createClient(), []);
+  const [storedProfile, setStoredProfile] = useState<BusinessProfile | null>(null);
   const [draft, setDraft] = useState<BusinessProfile | null>(null);
-  const profile = draft ?? storedProfile ?? initialProfile;
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const profileFallback = useMemo(() => ({ ...initialProfile, contactName: account?.name ?? "", workEmail: user?.email ?? account?.email ?? "" }), [account, user]);
+  const profile = draft ?? storedProfile ?? profileFallback;
   function setProfile(update: BusinessProfile | ((current: BusinessProfile) => BusinessProfile)) {
-    setDraft((current) => typeof update === "function" ? update(current ?? storedProfile ?? initialProfile) : update);
+    setDraft((current) => typeof update === "function" ? update(current ?? storedProfile ?? profileFallback) : update);
   }
   const isEditing = Boolean(storedProfile);
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) return;
+    let active = true;
+    const userId = user.id;
+    async function loadProfile() {
+      const { data, error: profileError } = await supabase.from("business_profiles").select("*").eq("user_id", userId).maybeSingle();
+      if (!active) return;
+      if (profileError) setError(profileError.message);
+      setStoredProfile(data ? businessProfileFromRow(data) : null);
+      setLoading(false);
+    }
+    void loadProfile();
+    return () => { active = false; };
+  }, [authLoading, supabase, user]);
 
   function toggleGoal(goal: string) {
     setProfile((current) => ({ ...current, goals: current.goals.includes(goal) ? current.goals.filter((item) => item !== goal) : [...current.goals, goal] }));
   }
 
-  function submit(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault();
+    if (!user) {
+      setError("Your session has expired. Sign in again to save this workspace.");
+      return;
+    }
+    setSaving(true);
+    setError("");
     const saved = { ...profile, updatedAt: new Date().toISOString() };
-    writeStored(storageKeys.businessProfile, saved);
-    writeStored(storageKeys.account, { role: "business", name: profile.contactName, email: profile.workEmail, createdAt: new Date().toISOString() });
+    const { error: saveError } = await supabase.from("business_profiles").upsert(businessProfileToRow(user.id, saved), { onConflict: "user_id" });
+    setSaving(false);
+    if (saveError) {
+      setError(saveError.message);
+      return;
+    }
+    setStoredProfile(saved);
     router.push("/dashboard/business?welcome=1");
+    router.refresh();
   }
+
+  if (loading) return <main className="module-page"><ModuleHeader /><section className="missing-profile"><span>BR</span><h1>Loading your business workspace…</h1></section></main>;
 
   return (
     <main className="module-page business-join-page">
@@ -60,7 +99,8 @@ export default function BusinessJoinPage() {
             </div>
             <label>Typical monthly creator budget<select value={profile.monthlyBudget} onChange={(event) => setProfile({ ...profile, monthlyBudget: event.target.value })}><option>Under ₦250K</option><option>₦250K–₦1M</option><option>₦1M–₦5M</option><option>₦5M+</option><option>Still exploring</option></select></label>
             <fieldset><legend>What do you want to do first?</legend><div className="goal-picker">{goalOptions.map((goal) => <button key={goal} type="button" className={profile.goals.includes(goal) ? "selected" : ""} onClick={() => toggleGoal(goal)}><span>{profile.goals.includes(goal) ? "✓" : "+"}</span>{goal}</button>)}</div></fieldset>
-            <button className="primary-action wide" type="submit">{isEditing ? "Save workspace" : "Create free workspace"} <span>→</span></button>
+            {error && <p className="form-error" role="alert">{error}</p>}
+            <button className="primary-action wide" type="submit" disabled={saving}>{saving ? "Saving…" : isEditing ? "Save workspace" : "Create free workspace"} <span>→</span></button>
             <small className="terms-copy">By continuing, you agree to CreatorRadar&apos;s acceptable-use and privacy terms.</small>
           </form>
           <p>Are you a creator? <Link href="/join/creator">Create a creator profile</Link>.</p>

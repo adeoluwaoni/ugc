@@ -1,9 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useAuth } from "@/components/auth-provider";
 import { ModuleHeader } from "@/components/module-header";
-import { CreatorProfile, SocialPlatform, storageKeys, useStored, writeStored } from "@/lib/account";
+import { CreatorProfile, SocialPlatform } from "@/lib/account";
+import { createClient } from "@/lib/supabase/client";
+import { creatorProfileFromRow, creatorProfileToRow } from "@/lib/supabase/profiles";
 
 function formatNumber(value?: number) {
   if (value === undefined) return "Pending";
@@ -11,12 +14,29 @@ function formatNumber(value?: number) {
 }
 
 export default function CreatorDashboardPage() {
-  const storedProfile = useStored<CreatorProfile | null>(storageKeys.creatorProfile, null);
-  const [draft, setDraft] = useState<CreatorProfile | null>(null);
-  const profile = draft ?? storedProfile;
-  const setProfile = setDraft;
+  const { user, loading: authLoading } = useAuth();
+  const supabase = useMemo(() => createClient(), []);
+  const [profile, setProfile] = useState<CreatorProfile | null>(null);
+  const [loading, setLoading] = useState(true);
   const [welcome, setWelcome] = useState(true);
   const [syncing, setSyncing] = useState<SocialPlatform | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) return;
+    let active = true;
+    const userId = user.id;
+    async function loadProfile() {
+      const { data, error: profileError } = await supabase.from("creator_profiles").select("*").eq("user_id", userId).maybeSingle();
+      if (!active) return;
+      if (profileError) setError(profileError.message);
+      setProfile(data ? creatorProfileFromRow(data) : null);
+      setLoading(false);
+    }
+    void loadProfile();
+    return () => { active = false; };
+  }, [authLoading, supabase, user]);
 
   const completion = useMemo(() => {
     if (!profile) return 0;
@@ -31,13 +51,19 @@ export default function CreatorDashboardPage() {
       const response = await fetch("/api/social-sync", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ platform, url }) });
       const result = await response.json();
       const next = { ...profile, socials: profile.socials.map((social) => social.platform === platform ? { ...social, ...(response.ok ? result : { status: "error", message: result.error }) } : social), updatedAt: new Date().toISOString() } as CreatorProfile;
+      if (!user) return;
+      const { error: saveError } = await supabase.from("creator_profiles").upsert(creatorProfileToRow(user.id, next), { onConflict: "user_id" });
+      if (saveError) {
+        setError(saveError.message);
+        return;
+      }
       setProfile(next);
-      writeStored(storageKeys.creatorProfile, next);
     } finally {
       setSyncing(null);
     }
   }
 
+  if (loading) return <main className="module-page"><ModuleHeader /><section className="missing-profile"><span>CR</span><h1>Loading your creator workspace…</h1></section></main>;
   if (!profile) return <main className="module-page"><ModuleHeader /><section className="missing-profile"><span>CR</span><h1>Create your creator profile first</h1><p>Add your audience, channels and starting rates to become discoverable.</p><Link href="/join/creator">Start creator onboarding →</Link></section></main>;
 
   const startingRate = Math.min(...profile.rates.map((rate) => rate.price));
@@ -47,6 +73,7 @@ export default function CreatorDashboardPage() {
       <ModuleHeader />
       <section className="dashboard-shell">
         {welcome && <div className="welcome-banner"><span>✓</span><div><strong>Your creator profile is live in this workspace.</strong><p>Keep your rates and connected channels current to improve buyer confidence.</p></div><button type="button" onClick={() => setWelcome(false)}>×</button></div>}
+        {error && <p className="form-error" role="alert">{error}</p>}
         <header className="dashboard-heading"><div><span className="section-kicker">Creator workspace</span><h1>Welcome, {profile.displayName.split(" ")[0]}.</h1><p>Manage how businesses discover and evaluate your work.</p></div><Link className="primary-action" href="/join/creator">Edit profile</Link></header>
 
         <div className="dashboard-stat-grid">

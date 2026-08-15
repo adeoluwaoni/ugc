@@ -1,7 +1,9 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { RadarAccount, storageKeys, useStored, writeStored } from "@/lib/account";
+import { storageKeys, useStored, writeStored } from "@/lib/account";
+import { useAuth } from "@/components/auth-provider";
+import { createClient } from "@/lib/supabase/client";
 
 type PlatformName = "Instagram" | "TikTok" | "YouTube" | "X";
 
@@ -420,7 +422,8 @@ export default function Home() {
   const [budget, setBudget] = useState(600000);
   const [minEngagement, setMinEngagement] = useState(0);
   const [sortBy, setSortBy] = useState("Best match");
-  const saved = useStored<number[]>(storageKeys.shortlist, []);
+  const localSaved = useStored<number[]>(storageKeys.shortlist, []);
+  const [remoteSaved, setRemoteSaved] = useState<number[]>([]);
   const [selectedCreator, setSelectedCreator] = useState<Creator | null>(null);
   const [profileTab, setProfileTab] = useState<"overview" | "rates" | "audience">("overview");
   const [contacting, setContacting] = useState(false);
@@ -428,9 +431,23 @@ export default function Home() {
   const [mobileFilters, setMobileFilters] = useState(false);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [toast, setToast] = useState("");
-  const account = useStored<RadarAccount | null>(storageKeys.account, null);
+  const { user, account } = useAuth();
+  const saved = account?.role === "business" ? remoteSaved : localSaved;
   const profileViews = useStored<number[]>(storageKeys.profileViews, []);
   const [signupGate, setSignupGate] = useState(false);
+
+  useEffect(() => {
+    if (!user || account?.role !== "business") return;
+    let active = true;
+    const userId = user.id;
+    async function loadShortlist() {
+      const supabase = createClient();
+      const { data } = await supabase.from("shortlist_items").select("creator_catalog_id").eq("business_user_id", userId);
+      if (active) setRemoteSaved(data?.map((item) => item.creator_catalog_id) ?? []);
+    }
+    void loadShortlist();
+    return () => { active = false; };
+  }, [account?.role, user]);
 
   useEffect(() => {
     const creatorId = Number(new URLSearchParams(window.location.search).get("creator"));
@@ -541,10 +558,23 @@ export default function Home() {
     window.setTimeout(() => document.getElementById("creator-results")?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
   }
 
-  function toggleSaved(id: number) {
+  async function toggleSaved(id: number) {
     const isSaved = saved.includes(id);
+    const next = isSaved ? saved.filter((item) => item !== id) : [...saved, id];
+    if (account?.role === "business" && user) {
+      const supabase = createClient();
+      const { error } = isSaved
+        ? await supabase.from("shortlist_items").delete().eq("business_user_id", user.id).eq("creator_catalog_id", id)
+        : await supabase.from("shortlist_items").insert({ business_user_id: user.id, creator_catalog_id: id });
+      if (error) {
+        setToast("Could not update your shortlist");
+        return;
+      }
+      setRemoteSaved(next);
+    } else {
+      writeStored(storageKeys.shortlist, next);
+    }
     setToast(isSaved ? "Removed from shortlist" : "Added to shortlist");
-    writeStored(storageKeys.shortlist, isSaved ? saved.filter((item) => item !== id) : [...saved, id]);
   }
 
   function openCreator(creator: Creator) {
@@ -581,7 +611,8 @@ export default function Home() {
           </nav>
           <div className="topbar-actions">
             <span className="market-pill"><span className="flag-dot">NG</span> Nigeria <span className="down">⌄</span></span>
-            <a className="business-button" href={account ? (account.role === "creator" ? "/dashboard/creator" : "/dashboard/business") : "/join/business"}>{account ? "Dashboard" : "For businesses"}</a>
+            {!account && <a className="header-signin home-signin" href="/auth?mode=signin">Sign in</a>}
+            <a className="business-button" href={account ? (account.role === "creator" ? "/dashboard/creator" : "/dashboard/business") : "/auth?mode=signup&role=business&next=/join/business"}>{account ? "Dashboard" : "For businesses"}</a>
             <button className="mobile-menu-button" type="button" aria-label="Toggle menu" onClick={() => setMobileMenu((value) => !value)}><Icon name="menu" /></button>
           </div>
         </div>
@@ -624,7 +655,7 @@ export default function Home() {
       <div className="demo-notice">
         <span><Icon name="shield" size={16} /></span>
         <p><strong>Product demo:</strong> Profiles and rates below are illustrative. Live creator data should come from permitted platform APIs and creator-submitted rate cards.</p>
-        {!account && <a className="guest-profile-meter" href="/join/business"><strong>{Math.max(0, 3 - profileViews.length)}</strong><span>free profile view{3 - profileViews.length === 1 ? "" : "s"} left</span></a>}
+        {!account && <a className="guest-profile-meter" href="/auth?mode=signup&role=business&next=/join/business"><strong>{Math.max(0, 3 - profileViews.length)}</strong><span>free profile view{3 - profileViews.length === 1 ? "" : "s"} left</span></a>}
       </div>
 
       <section className="marketplace" id="creator-results">
@@ -745,7 +776,7 @@ export default function Home() {
       </section>
 
       <section className="how-section" id="how-it-works">
-        <div className="how-copy"><span className="section-kicker light">One brief. Better matches.</span><h2>From “who should we use?”<br/>to a confident shortlist.</h2><p>CreatorRadar brings fragmented public signals and creator-submitted commercial information into one clear workflow.</p><button type="button" onClick={() => document.getElementById("top")?.scrollIntoView({ behavior: "smooth" })}>Start a creator search <Icon name="arrow" /></button><div className="role-links"><a href="/join/business">Create business workspace</a><a href="/join/creator">Join as a creator</a></div></div>
+        <div className="how-copy"><span className="section-kicker light">One brief. Better matches.</span><h2>From “who should we use?”<br/>to a confident shortlist.</h2><p>CreatorRadar brings fragmented public signals and creator-submitted commercial information into one clear workflow.</p><button type="button" onClick={() => document.getElementById("top")?.scrollIntoView({ behavior: "smooth" })}>Start a creator search <Icon name="arrow" /></button><div className="role-links"><a href="/auth?mode=signup&role=business&next=/join/business">Create business workspace</a><a href="/auth?mode=signup&role=creator&next=/join/creator">Join as a creator</a></div></div>
         <div className="how-steps">
           <div><span>01</span><section><strong>Describe your campaign</strong><p>Tell Radar AI your product, customer, market and spend.</p></section></div>
           <div><span>02</span><section><strong>Compare verified signals</strong><p>Review audience fit, engagement, platforms and price.</p></section></div>
@@ -847,8 +878,8 @@ export default function Home() {
             <h2>You&apos;ve viewed your three free creator profiles.</h2>
             <p>Create a free business workspace to unlock unlimited profile access, keep your shortlist and request current rates.</p>
             <div className="gate-benefits"><span><Icon name="check" size={15} /> Unlimited creator profiles</span><span><Icon name="check" size={15} /> Persistent shortlists</span><span><Icon name="check" size={15} /> Rate requests</span></div>
-            <a className="gate-primary" href="/join/business">Create free business workspace <Icon name="arrow" /></a>
-            <a className="gate-secondary" href="/join/creator">I&apos;m a creator</a>
+            <a className="gate-primary" href="/auth?mode=signup&role=business&next=/join/business">Create free business workspace <Icon name="arrow" /></a>
+            <a className="gate-secondary" href="/auth?mode=signup&role=creator&next=/join/creator">I&apos;m a creator</a>
             <small>No card required. Your shortlist will be waiting.</small>
           </section>
         </div>

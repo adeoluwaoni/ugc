@@ -1,10 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@/components/auth-provider";
 import { ModuleHeader } from "@/components/module-header";
-import { CreatorProfile, RatePackage, SocialConnection, SocialPlatform, storageKeys, useStored, writeStored } from "@/lib/account";
+import { CreatorProfile, RatePackage, SocialConnection, SocialPlatform } from "@/lib/account";
+import { createClient } from "@/lib/supabase/client";
+import { creatorProfileFromRow, creatorProfileToRow } from "@/lib/supabase/profiles";
 
 const platforms: SocialPlatform[] = ["Instagram", "TikTok", "YouTube", "X"];
 const niches = ["Beauty & Skincare", "Business & Career", "Comedy & Entertainment", "Fashion & Style", "Finance & Business", "Fitness & Wellness", "Food & Lifestyle", "Home & Family", "Tech & Gadgets", "Travel & Culture", "Other"];
@@ -30,17 +33,38 @@ const initialProfile: CreatorProfile = {
 
 export default function CreatorJoinPage() {
   const router = useRouter();
-  const storedProfile = useStored<CreatorProfile | null>(storageKeys.creatorProfile, null);
+  const { user, account, loading: authLoading } = useAuth();
+  const supabase = useMemo(() => createClient(), []);
+  const [storedProfile, setStoredProfile] = useState<CreatorProfile | null>(null);
   const [draft, setDraft] = useState<CreatorProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const profileFallback = useMemo(() => ({ ...initialProfile, displayName: account?.name ?? "", email: user?.email ?? account?.email ?? "" }), [account, user]);
   const normalizedStored = useMemo(() => storedProfile ? { ...storedProfile, socials: platforms.map((platform) => storedProfile.socials.find((item) => item.platform === platform) ?? { platform, url: "", status: "not_checked" as const }) } : null, [storedProfile]);
-  const profile = draft ?? normalizedStored ?? initialProfile;
+  const profile = draft ?? normalizedStored ?? profileFallback;
   function setProfile(update: CreatorProfile | ((current: CreatorProfile) => CreatorProfile)) {
-    setDraft((current) => typeof update === "function" ? update(current ?? normalizedStored ?? initialProfile) : update);
+    setDraft((current) => typeof update === "function" ? update(current ?? normalizedStored ?? profileFallback) : update);
   }
   const [step, setStep] = useState(1);
   const [syncing, setSyncing] = useState<SocialPlatform | null>(null);
   const [error, setError] = useState("");
   const isEditing = Boolean(storedProfile);
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) return;
+    let active = true;
+    const userId = user.id;
+    async function loadProfile() {
+      const { data, error: profileError } = await supabase.from("creator_profiles").select("*").eq("user_id", userId).maybeSingle();
+      if (!active) return;
+      if (profileError) setError(profileError.message);
+      setStoredProfile(data ? creatorProfileFromRow(data) : null);
+      setLoading(false);
+    }
+    void loadProfile();
+    return () => { active = false; };
+  }, [authLoading, supabase, user]);
 
   const completion = useMemo(() => {
     const checks = [profile.displayName, profile.email, profile.location, profile.niche, profile.bio, profile.socials.some((item) => item.url), profile.rates.some((item) => item.price > 0)];
@@ -74,7 +98,7 @@ export default function CreatorJoinPage() {
     setProfile((current) => ({ ...current, rates: current.rates.map((rate, rateIndex) => rateIndex === index ? { ...rate, [key]: value } : rate) }));
   }
 
-  function submit(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault();
     const socials = profile.socials.filter((item) => item.url.trim());
     const rates = profile.rates.filter((item) => item.title.trim() && item.price > 0);
@@ -82,11 +106,24 @@ export default function CreatorJoinPage() {
       setError("Add at least one social profile and one priced package before publishing.");
       return;
     }
+    if (!user) {
+      setError("Your session has expired. Sign in again to publish your profile.");
+      return;
+    }
+    setSaving(true);
     const saved = { ...profile, socials, rates, updatedAt: new Date().toISOString() };
-    writeStored(storageKeys.creatorProfile, saved);
-    writeStored(storageKeys.account, { role: "creator", name: profile.displayName, email: profile.email, createdAt: new Date().toISOString() });
+    const { error: saveError } = await supabase.from("creator_profiles").upsert(creatorProfileToRow(user.id, saved), { onConflict: "user_id" });
+    setSaving(false);
+    if (saveError) {
+      setError(saveError.message);
+      return;
+    }
+    setStoredProfile(saved);
     router.push("/dashboard/creator?welcome=1");
+    router.refresh();
   }
+
+  if (loading) return <main className="module-page"><ModuleHeader /><section className="missing-profile"><span>CR</span><h1>Loading your creator workspace…</h1></section></main>;
 
   return (
     <main className="module-page">
@@ -166,7 +203,7 @@ export default function CreatorJoinPage() {
           {error && <p className="form-error" role="alert">{error}</p>}
           <div className="form-actions">
             <span>{isEditing ? "Editing your published profile" : "You can update this information at any time."}</span>
-            <div>{step > 1 && <button className="secondary-action" type="button" onClick={() => { setError(""); setStep(step - 1); }}>Back</button>}{step < 3 ? <button className="primary-action" type="button" onClick={() => { setError(""); setStep(step + 1); }}>Continue</button> : <button className="primary-action" type="submit">{isEditing ? "Save profile" : "Publish creator profile"}</button>}</div>
+            <div>{step > 1 && <button className="secondary-action" type="button" onClick={() => { setError(""); setStep(step - 1); }}>Back</button>}{step < 3 ? <button className="primary-action" type="button" onClick={() => { setError(""); setStep(step + 1); }}>Continue</button> : <button className="primary-action" type="submit" disabled={saving}>{saving ? "Saving…" : isEditing ? "Save profile" : "Publish creator profile"}</button>}</div>
           </div>
         </form>
       </section>
